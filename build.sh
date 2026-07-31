@@ -1,0 +1,1 @@
+unzip -o stambul-app.zip -d dist
