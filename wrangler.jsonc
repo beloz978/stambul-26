@@ -1,11 +1,14 @@
-// Конфиг для Cloudflare Workers Builds.
-// "name" должен СОВПАДАТЬ с именем вашего воркера в дашборде
-// (заголовок страницы проекта). Если он другой — исправьте строку ниже.
+// "name" должен совпадать с именем воркера в дашборде Cloudflare.
 {
   "name": "stambul-26",
+  "main": "server.js",
   "compatibility_date": "2026-08-01",
   "assets": {
     "directory": "./dist",
+    "binding": "ASSETS",
     "html_handling": "auto-trailing-slash"
   }
+  // Облачный кэш: в дашборде Storage & Databases → KV → Create namespace
+  // (любое имя, например stambul-sync), скопируйте его ID и раскомментируйте:
+  // ,"kv_namespaces": [{ "binding": "SYNC", "id": "ВСТАВЬТЕ_ID_NAMESPACE" }]
 }
