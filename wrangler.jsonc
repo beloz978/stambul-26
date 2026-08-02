@@ -3,6 +3,16 @@
   "name": "stambul-26",
   "main": "server.js",
   "compatibility_date": "2026-08-01",
+
+  // Хук сборки: выполняется автоматически при `npx wrangler deploy`.
+  // Благодаря ему команды в дашборде Cloudflare менять не нужно —
+  // старая build-команда распакует stambul-app.zip, а перед деплоем
+  // скрипт пересоберёт dist из слоёв (base-*.zip + инкременты).
+  // Флаг --soft: при любой проблеме остаётся прежняя сборка, деплой не падает.
+  "build": {
+    "command": "bash deploy.sh build --soft"
+  },
+
   "assets": {
     "directory": "./dist",
     "binding": "ASSETS",
