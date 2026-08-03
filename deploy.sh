@@ -74,10 +74,12 @@ info() { printf '   %s\n' "$*"; }
 warn() { printf '   \033[33m%s\033[0m\n' "$*"; }
 die()  { printf '\n\033[31m❌ %s\033[0m\n\n' "$*" >&2; exit 1; }
 
-# где лежат слои: releases/ приоритетнее, иначе корень
-layer_dir() { [ -d releases ] && [ -n "$(ls releases/*.zip 2>/dev/null)" ] && echo releases || echo .; }
-# все zip-архивы слоёв (без аудио)
-list_zips() { { ls "$(layer_dir)"/*.zip 2>/dev/null || true; } | grep -v 'tours-audio' || true; }
+# ищем архивы по всему репозиторию (кроме сборки и служебных папок)
+list_zips() {
+  find . -maxdepth 3 -name '*.zip' -type f \
+    -not -path './dist/*' -not -path './site/*' -not -path './node_modules/*' \
+    -not -path './.git/*' -not -name 'tours-audio*' 2>/dev/null | sort
+}
 # версия из имени: 1.83.zip → 1.83 ; base-1.82.zip → 1.82
 ver_of() { basename "$1" .zip | sed 's/^base-//'; }
 # версия приложения из index.html внутри архива
@@ -93,13 +95,17 @@ resolve_layers() {
   local zips; zips=$(list_zips)
 
   # самый свежий base-*.zip
-  local b; b=$(echo "$zips" | grep '/base-[0-9]' | sort -V | tail -1 || true)
+  local b; b=$(echo "$zips" | grep -E '/base-[0-9]' | sort -V | tail -1 || true)
   if [ -n "$b" ]; then
     BASE="$b"; BASE_V=$(ver_of "$b")
-  elif [ -f "$LEGACY" ]; then
-    BASE="$LEGACY"; BASE_V=$(ver_inside "$LEGACY"); [ -n "$BASE_V" ] || BASE_V="0"
   else
-    soft_exit "не найден ни base-<версия>.zip, ни $LEGACY"
+    local lg; lg=$(echo "$zips" | grep -E "/${LEGACY}\$" | head -1 || true)
+    [ -n "$lg" ] && LEGACY="$lg"
+    if [ -f "$LEGACY" ]; then
+      BASE="$LEGACY"; BASE_V=$(ver_inside "$LEGACY"); [ -n "$BASE_V" ] || BASE_V="0"
+    else
+      soft_exit "не найден ни base-<версия>.zip, ни $LEGACY"
+    fi
   fi
 
   # инкременты: имя = чистая версия, больше базовой
@@ -107,6 +113,7 @@ resolve_layers() {
   while read -r f; do
     [ -n "$f" ] || continue
     v=$(basename "$f" .zip)
+    [ "$f" = "$BASE" ] && continue
     echo "$v" | grep -qE '^[0-9]+(\.[0-9]+)*$' || continue
     [ "$(printf '%s\n%s\n' "$BASE_V" "$v" | sort -V | tail -1)" = "$v" ] || continue
     [ "$v" = "$BASE_V" ] && continue
@@ -181,14 +188,16 @@ do_build() {
   [ "$SOFT" = "1" ] && info "мягкий режим: при сбое останется прежняя сборка"
   rm -rf "${OUT_DIR:?}"; mkdir -p "$OUT_DIR"
 
-  info "основа: $(basename "$BASE") (версия $BASE_V)"
+  local found; found=$(list_zips | sed 's|^\./||' | tr '\n' ' ')
+  info "найдено архивов: ${found:-нет}"
+  info "основа: ${BASE#./} (версия $BASE_V)"
   unzip -oq "$BASE" -d "$OUT_DIR" || soft_exit "не распаковался $BASE"
   apply_removals
 
   local applied=1 f
   for f in "${INCS[@]:-}"; do
     [ -n "$f" ] || continue
-    info "инкремент: $(basename "$f")"
+    info "инкремент: ${f#./}"
     unzip -oq "$f" -d "$OUT_DIR" || soft_exit "не распаковался $f"
     apply_removals
     applied=$((applied+1))
@@ -210,8 +219,11 @@ do_build() {
   local cnt size
   cnt=$(find "$OUT_DIR" -type f | wc -l)
   size=$(du -sh "$OUT_DIR" | cut -f1)
-  printf '{"version":"%s","builtAt":"%s","layers":%s,"files":%s}\n' \
-    "$v" "$(date -u +%FT%TZ)" "$applied" "$cnt" > "$OUT_DIR/version.json"
+  local names; names=$(printf '%s' "$(basename "${BASE#./}")")
+  for f in "${INCS[@]:-}"; do [ -n "$f" ] && names="$names, $(basename "$f")"; done
+  printf '{"version":"%s","builtAt":"%s","layers":%s,"files":%s,"from":"%s","found":"%s"}\n' \
+    "$v" "$(date -u +%FT%TZ)" "$applied" "$cnt" "$names" "$(list_zips | sed 's|^\./||' | tr '\n' ' ')" \
+    > "$OUT_DIR/version.json"
 
   say "✅ Собрано: версия $v · слоёв $applied · файлов $cnt · $size"
   [ "${PUSH_SITE:-auto}" = "build" ] && do_push_site "$v"
@@ -333,7 +345,7 @@ do_pack() {
     rm -rf "$tmp"; info "изменений нет — инкремент не нужен"; return 0
   fi
 
-  local out; out="$(layer_dir)/$version.zip"
+  local out; out="./$version.zip"
   ( cd "$tmp" && zip -qr "../$out" . )
   rm -rf "$tmp"
   say "✅ $out · изменено $changed · удалено $removed · $(du -h "$out" | cut -f1)"
