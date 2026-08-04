@@ -1,0 +1,7 @@
+config/.env.secrets
+config/.env.secrets.*
+!config/.env.secrets.*.template
+.DS_Store
+dist/
+node_modules/
+.pack-tmp/
