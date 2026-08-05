@@ -1,0 +1,14 @@
+{
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "echo '📌 stambul-26: commit+push после каждой единицы работы · деплой: push в main (dashboard) или just deploy · статус: just status · TG-тред: t.me/c/2281796095/1519'"
+          }
+        ]
+      }
+    ]
+  }
+}
