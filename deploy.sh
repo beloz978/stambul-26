@@ -78,7 +78,8 @@ die()  { printf '\n\033[31m❌ %s\033[0m\n\n' "$*" >&2; exit 1; }
 list_zips() {
   find . -maxdepth 3 -name '*.zip' -type f \
     -not -path './dist/*' -not -path './site/*' -not -path './node_modules/*' \
-    -not -path './.git/*' -not -name 'tours-audio*' 2>/dev/null | sort
+    -not -path './.git/*' -not -path './_archive/*' -not -path './.stash/*' \
+    -not -name 'tours-audio*' 2>/dev/null | sort
 }
 # версия из имени: 1.83.zip → 1.83 ; base-1.82.zip → 1.82
 ver_of() { basename "$1" .zip | sed 's/^base-//'; }
@@ -115,7 +116,10 @@ resolve_layers() {
     v=$(basename "$f" .zip)
     [ "$f" = "$BASE" ] && continue
     echo "$v" | grep -qE '^[0-9]+(\.[0-9]+)*$' || continue
-    [ "$(printf '%s\n%s\n' "$BASE_V" "$v" | sort -V | tail -1)" = "$v" ] || continue
+    if [ "$(printf '%s\n%s\n' "$BASE_V" "$v" | sort -V | tail -1)" != "$v" ]; then
+      warn "⚠️  $f ПРОигнорирован: версия $v ≤ базовой $BASE_V (инкремент должен быть НОВЕЕ базы, напр. $(echo "$BASE_V" | awk -F. '{print $1"."$2+1}').zip)"
+      continue
+    fi
     [ "$v" = "$BASE_V" ] && continue
     if [ -n "$ONLY" ]; then
       [ "$(printf '%s\n%s\n' "$v" "$ONLY" | sort -V | tail -1)" = "$ONLY" ] || continue

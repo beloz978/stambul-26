@@ -49,3 +49,10 @@ kv-create NAME="stambul-sync":
 # уведомление в TG-тред проекта вручную
 tg STATUS TEXT:
     bash scripts/prj-tools/tg-notify.sh {{STATUS}} "{{TEXT}}"
+
+# git-flow: деплой ветки dev во второй воркер stambul-26-v02
+deploy-dev:
+    CF_ENV=dev bash scripts/prj-tools/cf.sh deploy
+
+status-dev:
+    CF_ENV=dev bash scripts/prj-tools/cf.sh status

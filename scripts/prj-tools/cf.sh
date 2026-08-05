@@ -29,6 +29,13 @@ ROOT=$(repo_root)
 API="${CF_API_BASE:-https://api.cloudflare.com/client/v4}"
 NAME="${WORKER_NAME:-stambul-26}"
 URL="${WORKER_URL:-https://stambul-26.pkvxmch86y.workers.dev}"
+# git-flow: CF_ENV=dev → воркер stambul-26-v02 (wrangler --env dev); авто по ветке dev
+CF_ENV="${CF_ENV:-}"
+[ -z "$CF_ENV" ] && [ "$(git -C "$ROOT" branch --show-current 2>/dev/null)" = "dev" ] && CF_ENV=dev
+if [ "$CF_ENV" = "dev" ]; then
+  NAME="${WORKER_NAME_DEV:-stambul-26-v02}"; URL="${WORKER_URL_DEV:-https://stambul-26-v02.pkvxmch86y.workers.dev}"
+  log "🌿 env: dev → воркер $NAME"
+fi
 
 # wrangler читает эти переменные сам — не нужен wrangler login
 export CLOUDFLARE_API_TOKEN="${CLOUDFLARE_API_TOKEN:-}"
@@ -121,7 +128,7 @@ do_deploy() {
   log "📦 Сборка"
   (cd "$ROOT" && bash deploy.sh build) || { tg failed "локальная сборка упала"; die "сборка упала"; }
   log "🚀 wrangler deploy"
-  if wr deploy; then
+  if wr deploy ${CF_ENV:+--env $CF_ENV}; then
     local v; v=$(curl -s "$URL/version.json" | python3 -c 'import json,sys;print(json.load(sys.stdin).get("version","?"))' 2>/dev/null)
     tg success "задеплоено локально (wrangler) · версия $v · $URL"
     log "✅ версия $v"
@@ -142,7 +149,7 @@ do_deploy_via_git() {
 
 do_rollback() {
   do_check
-  wr rollback --name "$NAME" "$@" && tg success "rollback выполнен · $URL" || { tg failed "rollback не прошёл"; die "rollback не прошёл"; }
+  wr rollback --name "$NAME" ${CF_ENV:+--env $CF_ENV} "$@" && tg success "rollback выполнен · $URL" || { tg failed "rollback не прошёл"; die "rollback не прошёл"; }
 }
 
 do_secrets() { do_check; wr secret list --name "$NAME" 2>/dev/null || api GET "/accounts/$CLOUDFLARE_ACCOUNT_ID/workers/scripts/$NAME/secrets" | python3 -m json.tool; }

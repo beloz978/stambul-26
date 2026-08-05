@@ -59,7 +59,9 @@ curl -s "$B/api/kv?code=test1&list=1"
 Секреты воркера: `ANTHROPIC_API_KEY` (гид; при отсутствии — фолбэк на OpenAI),
 `OPENAI_API_KEY` (озвучка + фолбэк). Ставятся: `just secret-put ANTHROPIC_API_KEY`.
 
-## Ветки
+## Ветки (git-flow)
 
-- `main` — деплой-триггер (push = прод-деплой дашбордом)
-- `feat/*` — работа в git-worktree, мёрж в `main` = релиз
+- `main` — прод: push → дашборд деплоит воркер `stambul-26`
+- `dev` — стейдж: `just deploy-dev` → воркер `stambul-26-v02` (URL: stambul-26-v02.pkvxmch86y.workers.dev)
+- `feat/*` — фичи; критичные — в git-worktree, некритичные — в основном чекауте под session-lock
+- Поток: `feat/*` → `dev` (обкатка на v02) → `main` (релиз)

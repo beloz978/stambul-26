@@ -19,5 +19,16 @@
     "html_handling": "auto-trailing-slash"
   },
   // Облачный кэш: namespace stambul-sync (создан через cf.sh kv-create, 2026-08-05)
-  "kv_namespaces": [{ "binding": "SYNC", "id": "cc894949ee2249438dfc7ff1e45f9659" }]
+  "kv_namespaces": [{ "binding": "SYNC", "id": "cc894949ee2249438dfc7ff1e45f9659" }],
+
+  // dev-окружение (git-flow: ветка dev → воркер stambul-26-v02).
+  // Деплой: CF_ENV=dev cf.sh deploy  (или just deploy-dev).
+  // assets/kv не наследуются в env — повторяем; KV пока общий с прод (TODO: разделить).
+  "env": {
+    "dev": {
+      "name": "stambul-26-v02",
+      "assets": { "directory": "./dist", "binding": "ASSETS", "html_handling": "auto-trailing-slash" },
+      "kv_namespaces": [{ "binding": "SYNC", "id": "cc894949ee2249438dfc7ff1e45f9659" }]
+    }
+  }
 }
