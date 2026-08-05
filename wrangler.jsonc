@@ -17,8 +17,7 @@
     "directory": "./dist",
     "binding": "ASSETS",
     "html_handling": "auto-trailing-slash"
-  }
-  // Облачный кэш: в дашборде Storage & Databases → KV → Create namespace
-  // (любое имя, например stambul-sync), скопируйте его ID и раскомментируйте:
-  // ,"kv_namespaces": [{ "binding": "SYNC", "id": "ВСТАВЬТЕ_ID_NAMESPACE" }]
+  },
+  // Облачный кэш: namespace stambul-sync (создан через cf.sh kv-create, 2026-08-05)
+  "kv_namespaces": [{ "binding": "SYNC", "id": "cc894949ee2249438dfc7ff1e45f9659" }]
 }
