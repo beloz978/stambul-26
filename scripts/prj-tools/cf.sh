@@ -85,6 +85,11 @@ do_check() {
   [ "$v" = "OK" ] || die "токен невалиден: $v"
   log "✅ токен валиден"
   need_account && log "✅ account: $CLOUDFLARE_ACCOUNT_ID"
+  # ловим «токен не от того аккаунта»: воркер должен существовать на этом аккаунте
+  local ok; ok=$(api GET "/accounts/$CLOUDFLARE_ACCOUNT_ID/workers/scripts/$NAME/settings" \
+    | python3 -c 'import json,sys;print("yes" if json.load(sys.stdin).get("success") else "no")' 2>/dev/null)
+  [ "$ok" = "yes" ] || die "воркер '$NAME' НЕ найден на аккаунте $CLOUDFLARE_ACCOUNT_ID — токен от другого Cloudflare-аккаунта (нужен beloz978)!"
+  log "✅ воркер '$NAME' найден на аккаунте"
 }
 
 do_whoami() {
