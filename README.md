@@ -40,6 +40,25 @@ just kv-create   # KV namespace для SYNC-кэша
 just tg success "текст"
 ```
 
+## Проверка API через curl
+
+```bash
+B=https://stambul-26.pkvxmch86y.workers.dev
+# ИИ-гид (JSON): {text}, заголовок X-Cache: HIT|MISS
+curl -s -X POST $B/api/ask -H 'content-type: application/json' \
+  -d '{"prompt":"Что посмотреть у Галатской башни за час?","code":"test1"}' | head -c 300
+# ИИ-гид (SSE-стриминг)
+curl -sN -X POST $B/api/ask -H 'content-type: application/json' -H 'accept: text/event-stream' \
+  -d '{"prompt":"Привет!"}' | head -5
+# Озвучка → mp3
+curl -s -X POST $B/api/tts -H 'content-type: application/json' -d '{"text":"тест"}' -o /tmp/t.mp3 -w '%{http_code}\n'
+# Облачный кэш
+curl -s "$B/api/kv?code=test1&list=1"
+```
+
+Секреты воркера: `ANTHROPIC_API_KEY` (гид; при отсутствии — фолбэк на OpenAI),
+`OPENAI_API_KEY` (озвучка + фолбэк). Ставятся: `just secret-put ANTHROPIC_API_KEY`.
+
 ## Ветки
 
 - `main` — деплой-триггер (push = прод-деплой дашбордом)

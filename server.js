@@ -1,18 +1,140 @@
-/* Воркер: статика + облачный кэш (KV) + прокси озвучки (TTS).
+/* Воркер: статика + облачный кэш (KV) + прокси озвучки (TTS) + ИИ-гид (ask).
    Эндпоинты:
      /api/kv?code=X&list=1     → список ключей группы
      /api/kv?code=X&key=K GET  → значение
      /api/kv?code=X&key=K PUT  → сохранить (тело = JSON)
      /api/tts  POST {text,model,voice} → audio/mpeg  (ключ живёт в секрете OPENAI_API_KEY)
+     /api/ask  POST {prompt,history?,model?,code?} → {text}  (Anthropic → OpenAI-фолбэк)
+               кэш ответов в KV 7 дней (X-Cache: HIT|MISS), лимит/сутки на код группы,
+               SSE если Accept: text/event-stream
    Секреты в дашборде: Settings → Variables and Secrets:
-     ANTHROPIC_API_KEY (для гида), OPENAI_API_KEY (для озвучки) */
-const CORS={'Access-Control-Allow-Origin':'*','Access-Control-Allow-Methods':'GET,PUT,POST,OPTIONS','Access-Control-Allow-Headers':'content-type'};
+     ANTHROPIC_API_KEY (для гида), OPENAI_API_KEY (для озвучки и фолбэка гида)
+   Переменные (необязательные): PROVIDER=anthropic|openai, ASK_DAILY_LIMIT (дефолт 200) */
+const CORS={'Access-Control-Allow-Origin':'*','Access-Control-Allow-Methods':'GET,PUT,POST,OPTIONS','Access-Control-Allow-Headers':'content-type,accept'};
 const J=(o,s=200)=>new Response(JSON.stringify(o),{status:s,headers:{'content-type':'application/json',...CORS}});
+
+/* ---------- ИИ-гид: провайдеры ---------- */
+const ASK_SYS='Ты — дружелюбный гид по Стамбулу для небольшой группы туристов (приложение-путеводитель, поездка 1–9 августа 2026). Отвечай кратко и по делу, по-русски.';
+// один повтор при 5xx, таймаут 30 с — по ТЗ приложения
+async function fetchRetry(url,opts){
+  for(let i=0;i<2;i++){
+    const r=await fetch(url,{...opts,signal:AbortSignal.timeout(30000)});
+    if(r.status<500||i===1)return r;
+  }
+}
+async function askAnthropic(env,body,stream){
+  const r=await fetchRetry('https://api.anthropic.com/v1/messages',{
+    method:'POST',
+    headers:{'content-type':'application/json','x-api-key':env.ANTHROPIC_API_KEY,'anthropic-version':'2023-06-01'},
+    body:JSON.stringify({model:body.model||'claude-opus-5',max_tokens:4096,stream,
+      system:ASK_SYS,
+      messages:[...(body.history||[]).filter(m=>m&&m.role&&m.content),{role:'user',content:body.prompt}]})
+  });
+  if(!r.ok)throw new Error('Anthropic '+r.status+': '+(await r.text()).slice(0,200));
+  if(stream)return{stream:r.body,parse:parseAnthropicSSE};
+  const d=await r.json();
+  if(d.stop_reason==='refusal')throw new Error('Anthropic refusal'); // проверяем ДО чтения content
+  return{text:(d.content||[]).filter(b=>b.type==='text').map(b=>b.text).join('')};
+}
+async function askOpenAI(env,body,stream){
+  const r=await fetchRetry('https://api.openai.com/v1/chat/completions',{
+    method:'POST',
+    headers:{'content-type':'application/json','authorization':'Bearer '+env.OPENAI_API_KEY},
+    body:JSON.stringify({model:'gpt-4o-mini',stream,
+      messages:[{role:'system',content:ASK_SYS},...(body.history||[]).filter(m=>m&&m.role&&m.content),{role:'user',content:body.prompt}]})
+  });
+  if(!r.ok)throw new Error('OpenAI '+r.status+': '+(await r.text()).slice(0,200));
+  if(stream)return{stream:r.body,parse:parseOpenAISSE};
+  const d=await r.json();
+  return{text:d.choices?.[0]?.message?.content||''};
+}
+// извлечение текстовых дельт из провайдерских SSE
+function parseAnthropicSSE(data){try{const e=JSON.parse(data);
+  return e.type==='content_block_delta'&&e.delta?.type==='text_delta'?e.delta.text:'';}catch(_){return'';}}
+function parseOpenAISSE(data){if(data==='[DONE]')return'';
+  try{return JSON.parse(data).choices?.[0]?.delta?.content||'';}catch(_){return'';}}
+
+async function handleAsk(req,env){
+  if(req.method!=='POST')return J({error:'нужен POST {prompt}'},405);
+  let b={};try{b=await req.json();}catch(e){}
+  b.prompt=String(b.prompt||'').slice(0,8000);
+  if(!b.prompt)return J({error:'пустой prompt'},400);
+  const t0=Date.now(),wantSSE=(req.headers.get('accept')||'').includes('text/event-stream');
+
+  // суточный лимит на код группы (счётчик в KV)
+  const code=String(b.code||'anon').slice(0,32),limit=+(env.ASK_DAILY_LIMIT||200);
+  let lim=null;
+  if(env.SYNC){
+    const day=new Date().toISOString().slice(0,10),lk='ask-limit|'+code+'|'+day;
+    const n=+(await env.SYNC.get(lk))||0;
+    if(n>=limit)return J({error:'дневной лимит вопросов гиду ('+limit+') исчерпан для группы — попробуйте завтра'},429);
+    lim={lk,n};
+  }
+
+  // кэш ответа: sha256(prompt+model), 7 дней
+  const model=b.model||'',hist=(b.history||[]).length;
+  let ck=null;
+  if(env.SYNC&&!hist){ // кэшируем только вопросы без истории — иначе ключ не однозначен
+    const h=await crypto.subtle.digest('SHA-256',new TextEncoder().encode(b.prompt+'|'+model));
+    ck='ask-cache|'+[...new Uint8Array(h)].map(x=>x.toString(16).padStart(2,'0')).join('');
+    const hit=await env.SYNC.get(ck);
+    if(hit!==null){
+      console.log(JSON.stringify({ep:'ask',cache:'HIT',code,ms:Date.now()-t0}));
+      if(wantSSE)return new Response('data: '+JSON.stringify({text:hit})+'\n\ndata: [DONE]\n\n',
+        {headers:{'content-type':'text/event-stream','x-cache':'HIT',...CORS}});
+      return new Response(JSON.stringify({text:hit}),
+        {headers:{'content-type':'application/json','x-cache':'HIT',...CORS}});
+    }
+  }
+
+  // выбор провайдера: PROVIDER, иначе — у кого есть ключ; фолбэк на второго при ошибке
+  const order=(env.PROVIDER==='openai'||!env.ANTHROPIC_API_KEY)?['openai','anthropic']:['anthropic','openai'];
+  const call={anthropic:askAnthropic,openai:askOpenAI};
+  const avail=order.filter(p=>p==='anthropic'?env.ANTHROPIC_API_KEY:env.OPENAI_API_KEY);
+  if(!avail.length)return J({error:'на сервере не задан ни ANTHROPIC_API_KEY, ни OPENAI_API_KEY'},500);
+
+  let res=null,used=null,errs=[];
+  for(const p of avail){
+    try{res=await call[p](env,b,wantSSE);used=p;break;}
+    catch(e){errs.push(p+': '+String(e.message).slice(0,120));}
+  }
+  if(!res)return J({error:'провайдеры недоступны',details:errs},502);
+
+  const done=async(text)=>{ // пост-обработка: лимит + кэш (без содержимого в логах)
+    if(lim)await env.SYNC.put(lim.lk,String(lim.n+1),{expirationTtl:172800});
+    if(ck&&text)await env.SYNC.put(ck,text,{expirationTtl:604800});
+    console.log(JSON.stringify({ep:'ask',provider:used,cache:'MISS',sse:wantSSE,code,len:(text||'').length,ms:Date.now()-t0}));
+  };
+
+  if(!wantSSE){await done(res.text);
+    return new Response(JSON.stringify({text:res.text}),
+      {headers:{'content-type':'application/json','x-cache':'MISS',...CORS}});}
+
+  // SSE: транслируем дельты провайдера как data:{text}, копим полный текст для кэша
+  let acc='',buf='';
+  const ts=new TransformStream({
+    transform(chunk,ctrl){
+      buf+=new TextDecoder().decode(chunk);
+      const lines=buf.split('\n');buf=lines.pop();
+      for(const l of lines){
+        if(!l.startsWith('data:'))continue;
+        const d=res.parse(l.slice(5).trim());
+        if(d){acc+=d;ctrl.enqueue(new TextEncoder().encode('data: '+JSON.stringify({text:d})+'\n\n'));}
+      }
+    },
+    async flush(ctrl){await done(acc);ctrl.enqueue(new TextEncoder().encode('data: [DONE]\n\n'));}
+  });
+  res.stream.pipeTo(ts.writable).catch(()=>{});
+  return new Response(ts.readable,{headers:{'content-type':'text/event-stream','x-cache':'MISS',...CORS}});
+}
 
 export default{
   async fetch(req,env){
     const url=new URL(req.url);
     if(req.method==='OPTIONS')return new Response(null,{headers:CORS});
+
+    /* ---------- ИИ-гид ---------- */
+    if(url.pathname==='/api/ask')return handleAsk(req,env);
 
     /* ---------- озвучка ---------- */
     if(url.pathname==='/api/tts'){
