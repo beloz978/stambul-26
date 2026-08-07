@@ -36,6 +36,20 @@ async function askAnthropic(env,body,stream){
   if(d.stop_reason==='refusal')throw new Error('Anthropic refusal'); // проверяем ДО чтения content
   return{text:(d.content||[]).filter(b=>b.type==='text').map(b=>b.text).join('')};
 }
+async function askOpenRouter(env,body,stream){
+  const r=await fetchRetry('https://openrouter.ai/api/v1/chat/completions',{
+    method:'POST',
+    headers:{'content-type':'application/json','authorization':'Bearer '+env.OPENROUTER_API_KEY,
+      'HTTP-Referer':'https://stambul-26.pkvxmch86y.workers.dev','X-Title':'stambul-26'},
+    body:JSON.stringify({model:b0(body.model)||env.OPENROUTER_MODEL||'openai/gpt-4o-mini',stream,
+      messages:[{role:'system',content:ASK_SYS},...(body.history||[]).filter(m=>m&&m.role&&m.content),{role:'user',content:body.prompt}]})
+  });
+  if(!r.ok)throw new Error('OpenRouter '+r.status+': '+(await r.text()).slice(0,200));
+  if(stream)return{stream:r.body,parse:parseOpenAISSE};
+  const d=await r.json();
+  return{text:d.choices?.[0]?.message?.content||''};
+}
+const b0=x=>x&&String(x).includes('/')?String(x):null; // модель для OpenRouter — только в формате vendor/model
 async function askOpenAI(env,body,stream){
   const r=await fetchRetry('https://api.openai.com/v1/chat/completions',{
     method:'POST',
@@ -88,10 +102,12 @@ async function handleAsk(req,env){
   }
 
   // выбор провайдера: PROVIDER, иначе — у кого есть ключ; фолбэк на второго при ошибке
-  const order=(env.PROVIDER==='openai'||!env.ANTHROPIC_API_KEY)?['openai','anthropic']:['anthropic','openai'];
-  const call={anthropic:askAnthropic,openai:askOpenAI};
-  const avail=order.filter(p=>p==='anthropic'?env.ANTHROPIC_API_KEY:env.OPENAI_API_KEY);
-  if(!avail.length)return J({error:'на сервере не задан ни ANTHROPIC_API_KEY, ни OPENAI_API_KEY'},500);
+  const all=['anthropic','openai','openrouter'];
+  const order=all.includes(env.PROVIDER)?[env.PROVIDER,...all.filter(p=>p!==env.PROVIDER)]:all;
+  const call={anthropic:askAnthropic,openai:askOpenAI,openrouter:askOpenRouter};
+  const keys={anthropic:env.ANTHROPIC_API_KEY,openai:env.OPENAI_API_KEY,openrouter:env.OPENROUTER_API_KEY};
+  const avail=order.filter(p=>keys[p]);
+  if(!avail.length)return J({error:'нет ни одного ключа: ANTHROPIC_API_KEY / OPENAI_API_KEY / OPENROUTER_API_KEY'},500);
 
   let res=null,used=null,errs=[];
   for(const p of avail){
@@ -150,7 +166,8 @@ export default{
       if(env.OPENAI_API_KEY)provs.push('openai');
       if(env.ELEVENLABS_API_KEY)provs.push('elevenlabs');
       const on=!/^(0|off|false)$/i.test(env.TTS_ENABLED||'')&&provs.length>0;
-      return J({enabled:on,providers:provs,
+      const askProvs=['anthropic','openai','openrouter'].filter(p=>({anthropic:env.ANTHROPIC_API_KEY,openai:env.OPENAI_API_KEY,openrouter:env.OPENROUTER_API_KEY})[p]);
+      return J({enabled:on,providers:provs,ask_providers:askProvs, // openrouter: текстовые фичи, TTS не поддерживает
         default:{provider:env.TTS_PROVIDER||provs[0]||null,model:env.TTS_MODEL||null,voice:env.TTS_VOICE||null}});
     }
     if(url.pathname==='/api/tts'){

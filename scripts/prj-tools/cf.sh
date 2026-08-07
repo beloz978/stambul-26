@@ -127,6 +127,7 @@ do_deploy() {
   do_check
   log "📦 Сборка"
   (cd "$ROOT" && bash deploy.sh build) || { tg failed "локальная сборка упала"; die "сборка упала"; }
+  do_secrets_sync || log_error "secrets-sync с ошибками — деплой продолжаем"
   log "🚀 wrangler deploy"
   if wr deploy ${CF_ENV:+--env $CF_ENV}; then
     local v; v=$(curl -s "$URL/version.json" | python3 -c 'import json,sys;print(json.load(sys.stdin).get("version","?"))' 2>/dev/null)
@@ -150,6 +151,21 @@ do_deploy_via_git() {
 do_rollback() {
   do_check
   wr rollback --name "$NAME" ${CF_ENV:+--env $CF_ENV} "$@" && tg success "rollback выполнен · $URL" || { tg failed "rollback не прошёл"; die "rollback не прошёл"; }
+}
+
+# все app-секреты из config/.env.secrets → секреты воркера (SSoT хранения — Cloudflare).
+# Список имён конфигурируем: APP_SECRETS в config/.env.config.template.
+do_secrets_sync() {
+  do_check
+  local names="${APP_SECRETS:-OPENAI_API_KEY ANTHROPIC_API_KEY ELEVENLABS_API_KEY}" n v cnt=0
+  for n in $names; do
+    v="${!n:-}"
+    [ -n "$v" ] || { log "…$n: нет в config/.env.secrets — пропуск"; continue; }
+    if printf '%s' "$v" | wr secret put "$n" ${CF_ENV:+--env $CF_ENV} >/dev/null 2>&1; then
+      log "✅ $n → воркер $NAME"; cnt=$((cnt+1))
+    else log_error "$n: secret put не прошёл"; fi
+  done
+  log "секретов в Cloudflare синхронизировано: $cnt"
 }
 
 do_secrets() { do_check; wr secret list --name "$NAME" 2>/dev/null || api GET "/accounts/$CLOUDFLARE_ACCOUNT_ID/workers/scripts/$NAME/secrets" | python3 -m json.tool; }
@@ -180,8 +196,9 @@ case "$CMD" in
   tail)           do_check; wr tail --name "$NAME" ;;
   rollback)       do_rollback "$@" ;;
   secrets)        do_secrets ;;
+  secrets-sync)   do_secrets_sync ;;
   secret-put)     do_secret_put "$@" ;;
   kv-list)        do_kv_list ;;
   kv-create)      do_kv_create "$@" ;;
-  *) die "неизвестная команда: $CMD (auth|check|whoami|status|deploy|deploy-via-git|tail|rollback|secrets|secret-put|kv-list|kv-create)" ;;
+  *) die "неизвестная команда: $CMD (auth|check|whoami|status|deploy|deploy-via-git|tail|rollback|secrets|secrets-sync|secret-put|kv-list|kv-create)" ;;
 esac
