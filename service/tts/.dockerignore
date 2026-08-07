@@ -1,0 +1,11 @@
+.venv/
+.cache/
+__pycache__/
+*.pyc
+.pytest_cache/
+.ruff_cache/
+tests/
+config/.env.config
+config/.env.secrets
+config/.env.secrets.*
+!config/.env.secrets.*.template

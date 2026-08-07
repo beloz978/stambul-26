@@ -5,3 +5,16 @@ config/.env.secrets.*
 dist/
 node_modules/
 .pack-tmp/
+
+# service/tts (FastAPI). Шаблоны config/*.template — коммитятся, отрендеренное — нет.
+# uv.lock коммитится: воспроизводимая сборка образа.
+service/tts/config/.env.config
+service/tts/config/.env.secrets
+service/tts/config/.env.secrets.*
+!service/tts/config/.env.secrets.*.template
+service/tts/.venv/
+service/tts/.cache/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/

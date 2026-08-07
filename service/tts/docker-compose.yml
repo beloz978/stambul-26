@@ -1,0 +1,22 @@
+# Локальный запуск: docker compose up --build   (из service/tts/)
+# Ключи берутся из config/.env.secrets — создайте его: bash config/.env-render.sh secrets
+services:
+  tts:
+    build: .
+    image: stambul-tts:local
+    ports:
+      - "${TTS_PORT:-8080}:8080"
+    env_file:
+      - path: ./config/.env.config
+        required: false
+      - path: ./config/.env.secrets
+        required: false
+    environment:
+      TTS_CACHE_DIR: /data/cache
+    volumes:
+      # Кэш переживает пересборку образа — уже оплаченное аудио не синтезируется заново.
+      - tts-cache:/data
+    restart: unless-stopped
+
+volumes:
+  tts-cache:

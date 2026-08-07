@@ -1,0 +1,21 @@
+#!/usr/bin/env bash
+# Поднять сервис локально: ./RUN [порт]
+# Первый запуск сам создаст venv и отрендерит config/.env.config.
+set -euo pipefail
+cd "$(dirname "$0")"
+
+PORT="${1:-8080}"
+
+command -v uv >/dev/null || {
+  echo "нужен uv: https://docs.astral.sh/uv/" >&2
+  exit 1
+}
+
+[[ -f config/.env.config ]] || bash config/.env-render.sh config
+[[ -f config/.env.secrets ]] || {
+  bash config/.env-render.sh secrets
+  echo "⚠ впишите TTS_OPENAI_API_KEY в config/.env.secrets" >&2
+}
+
+uv sync --extra edge --extra dev
+exec uv run uvicorn app.main:app --host 0.0.0.0 --port "$PORT" --reload

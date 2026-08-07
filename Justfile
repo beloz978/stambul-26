@@ -56,3 +56,26 @@ deploy-dev:
 
 status-dev:
     CF_ENV=dev bash scripts/prj-tools/cf.sh status
+
+# ── сервис озвучки (service/tts, FastAPI) ───────────────────────────────────
+# Деплоится отдельно от воркера: Python в Cloudflare Workers не запускается.
+
+# поднять локально с автоперезагрузкой
+tts-run PORT="8080":
+    bash service/tts/RUN {{PORT}}
+
+# тесты сервиса озвучки
+tts-test:
+    cd service/tts && uv run pytest -q
+
+# линтер сервиса озвучки
+tts-lint:
+    cd service/tts && uv run ruff check .
+
+# сервис озвучки в docker (кэш — в именованном томе)
+tts-docker:
+    cd service/tts && docker compose up --build
+
+# готовность провайдеров и кэша
+tts-health URL="http://127.0.0.1:8080":
+    curl -s {{URL}}/healthz

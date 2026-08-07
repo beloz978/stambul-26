@@ -59,6 +59,24 @@ curl -s "$B/api/kv?code=test1&list=1"
 Секреты воркера: `ANTHROPIC_API_KEY` (гид; при отсутствии — фолбэк на OpenAI),
 `OPENAI_API_KEY` (озвучка + фолбэк). Ставятся: `just secret-put ANTHROPIC_API_KEY`.
 
+## Сервис озвучки — [`service/tts/`](service/tts/README.md)
+
+FastAPI-прокси к OpenAI `/v1/audio/speech` с кэшем на диске и бесплатным
+фолбэком `edge-tts`. Нужен потому, что браузеру нельзя ходить в OpenAI напрямую:
+режет CORS, а ключ в клиенте виден всем. Альтернатива воркерному `/api/tts` —
+там же, где нужен кэш и работа без Cloudflare.
+
+```bash
+just tts-run      # локально на :8080
+just tts-test     # 35 тестов
+just tts-docker   # docker compose
+```
+
+Деплоится **отдельно** от воркера (Fly.io / любой VM с docker) — Python
+в Cloudflare Workers не запускается, в сборку воркера каталог не попадает.
+Подключение приложения — сменой адреса в «Настройки → Озвучка», правок
+клиента не требуется.
+
 ## Ветки (git-flow)
 
 - `main` — прод: push → дашборд деплоит воркер `stambul-26`
