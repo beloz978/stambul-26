@@ -76,7 +76,7 @@ die()  { printf '\n\033[31m❌ %s\033[0m\n\n' "$*" >&2; exit 1; }
 
 # ищем архивы по всему репозиторию (кроме сборки и служебных папок)
 list_zips() {
-  find . -maxdepth 3 -name '*.zip' -type f \
+  find . -maxdepth 3 \( -name '*.zip' -o -regex '.*/[0-9][0-9]*\(\.[0-9][0-9]*\)*' \) -type f \
     -not -path './dist/*' -not -path './site/*' -not -path './node_modules/*' \
     -not -path './.git/*' -not -path './_archive/*' -not -path './.stash/*' \
     -not -name 'tours-audio*' 2>/dev/null | sort
