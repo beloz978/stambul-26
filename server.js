@@ -95,9 +95,9 @@ async function handleAsk(req,env){
     if(hit!==null){
       console.log(JSON.stringify({ep:'ask',cache:'HIT',code,ms:Date.now()-t0}));
       if(wantSSE)return new Response('data: '+JSON.stringify({text:hit})+'\n\ndata: [DONE]\n\n',
-        {headers:{'content-type':'text/event-stream','x-cache':'HIT',...CORS}});
+        {headers:{'content-type':'text/event-stream','x-cache':'HIT','x-secrets-source':'cloudflare-worker-secrets',...CORS}});
       return new Response(JSON.stringify({text:hit}),
-        {headers:{'content-type':'application/json','x-cache':'HIT',...CORS}});
+        {headers:{'content-type':'application/json','x-cache':'HIT','x-secrets-source':'cloudflare-worker-secrets',...CORS}});
     }
   }
 
@@ -124,7 +124,7 @@ async function handleAsk(req,env){
 
   if(!wantSSE){await done(res.text);
     return new Response(JSON.stringify({text:res.text}),
-      {headers:{'content-type':'application/json','x-cache':'MISS',...CORS}});}
+      {headers:{'content-type':'application/json','x-cache':'MISS','x-provider':used,'x-secrets-source':'cloudflare-worker-secrets',...CORS}});}
 
   // SSE: транслируем дельты провайдера как data:{text}, копим полный текст для кэша
   let acc='',buf='';
@@ -141,13 +141,29 @@ async function handleAsk(req,env){
     async flush(ctrl){await done(acc);ctrl.enqueue(new TextEncoder().encode('data: [DONE]\n\n'));}
   });
   res.stream.pipeTo(ts.writable).catch(()=>{});
-  return new Response(ts.readable,{headers:{'content-type':'text/event-stream','x-cache':'MISS',...CORS}});
+  return new Response(ts.readable,{headers:{'content-type':'text/event-stream','x-cache':'MISS','x-provider':used,'x-secrets-source':'cloudflare-worker-secrets',...CORS}});
 }
 
 export default{
   async fetch(req,env){
     const url=new URL(req.url);
     if(req.method==='OPTIONS')return new Response(null,{headers:CORS});
+
+    /* ---------- статус секретов/фич (для людей и фронта) ---------- */
+    if(url.pathname==='/api/status'){
+      const y=x=>x?'✅ секрет Cloudflare':'—';
+      const rows=[
+        ['ИИ-гид · Anthropic (claude-opus-5)',y(env.ANTHROPIC_API_KEY)],
+        ['ИИ-гид · OpenAI (gpt-4o-mini)',y(env.OPENAI_API_KEY)],
+        ['ИИ-гид · OpenRouter',y(env.OPENROUTER_API_KEY)],
+        ['Озвучка · OpenAI TTS',y(env.OPENAI_API_KEY)],
+        ['Озвучка · ElevenLabs',y(env.ELEVENLABS_API_KEY)],
+        ['Уведомления · Telegram',y(env.TG_BOT_TOKEN)],
+        ['Облачный кэш · KV SYNC',env.SYNC?'✅ binding':'—'],
+      ].map(([f,s])=>'<tr><td>'+f+'</td><td>'+s+'</td></tr>').join('');
+      return new Response('<!doctype html><meta charset=utf-8><meta name=viewport content="width=device-width,initial-scale=1"><title>stambul-26 · статус</title><style>body{font:16px/1.5 -apple-system,sans-serif;max-width:560px;margin:24px auto;padding:0 12px}td{padding:6px 10px;border-bottom:1px solid #ddd}h1{font-size:20px}</style><h1>🔐 Секреты и фичи</h1><p>Все ключи хранятся как <b>секреты Cloudflare-воркера</b> (в код и репозиторий не попадают).</p><table>'+rows+'</table>',
+        {headers:{'content-type':'text/html; charset=utf-8',...CORS}});
+    }
 
     /* ---------- ИИ-гид ---------- */
     if(url.pathname==='/api/ask')return handleAsk(req,env);
@@ -167,7 +183,7 @@ export default{
       if(env.ELEVENLABS_API_KEY)provs.push('elevenlabs');
       const on=!/^(0|off|false)$/i.test(env.TTS_ENABLED||'')&&provs.length>0;
       const askProvs=['anthropic','openai','openrouter'].filter(p=>({anthropic:env.ANTHROPIC_API_KEY,openai:env.OPENAI_API_KEY,openrouter:env.OPENROUTER_API_KEY})[p]);
-      return J({enabled:on,providers:provs,ask_providers:askProvs, // openrouter: текстовые фичи, TTS не поддерживает
+      return J({enabled:on,providers:provs,ask_providers:askProvs,secrets_source:'cloudflare-worker-secrets', // openrouter: текстовые фичи, TTS не поддерживает
         default:{provider:env.TTS_PROVIDER||provs[0]||null,model:env.TTS_MODEL||null,voice:env.TTS_VOICE||null}});
     }
     if(url.pathname==='/api/tts'){
@@ -200,7 +216,7 @@ export default{
       if(!r.ok)return J({error:prov+' '+r.status+': '+(await r.text()).slice(0,200)},502);
       console.log(JSON.stringify({ep:'tts',provider:prov,len:text.length}));
       return new Response(r.body,{headers:{'content-type':'audio/mpeg',
-        'cache-control':'public, max-age=86400','x-tts-provider':prov,...CORS}});
+        'cache-control':'public, max-age=86400','x-tts-provider':prov,'x-secrets-source':'cloudflare-worker-secrets',...CORS}});
     }
 
     /* ---------- облачный кэш ---------- */

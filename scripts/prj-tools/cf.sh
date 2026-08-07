@@ -157,15 +157,24 @@ do_rollback() {
 # Список имён конфигурируем: APP_SECRETS в config/.env.config.template.
 do_secrets_sync() {
   do_check
-  local names="${APP_SECRETS:-OPENAI_API_KEY ANTHROPIC_API_KEY ELEVENLABS_API_KEY}" n v cnt=0
+  # раскладываем по ВСЕМ воркерам проекта stambul-26* (prod, v02, будущие)
+  local workers; workers=$(api GET "/accounts/$CLOUDFLARE_ACCOUNT_ID/workers/scripts" | python3 -c '
+import json,sys
+for s in json.load(sys.stdin).get("result") or []:
+    if s.get("id","").startswith("stambul-26"): print(s["id"])')
+  [ -n "$workers" ] || { log_error "воркеры stambul-26* не найдены"; return 1; }
+  local names="${APP_SECRETS:-OPENAI_API_KEY ANTHROPIC_API_KEY ELEVENLABS_API_KEY OPENROUTER_API_KEY}" n v w cnt=0
   for n in $names; do
     v="${!n:-}"
-    [ -n "$v" ] || { log "…$n: нет в config/.env.secrets — пропуск"; continue; }
-    if printf '%s' "$v" | wr secret put "$n" ${CF_ENV:+--env $CF_ENV} >/dev/null 2>&1; then
-      log "✅ $n → воркер $NAME"; cnt=$((cnt+1))
-    else log_error "$n: secret put не прошёл"; fi
+    [ -n "$v" ] || { log "…$n: нет значения (config/.env.secrets | ~/.ai/.env.secrets) — пропуск"; continue; }
+    for w in $workers; do
+      if printf '%s' "$v" | wr secret put "$n" --name "$w" >/dev/null 2>&1 \
+         || printf '%s' "$v" | wr versions secret put "$n" --name "$w" --message "secrets-sync $n" >/dev/null 2>&1; then
+        log "✅ $n → $w"; cnt=$((cnt+1))
+      else log_error "$n → $w: secret put не прошёл (обычный и versions)"; fi
+    done
   done
-  log "секретов в Cloudflare синхронизировано: $cnt"
+  log "секретов разложено по воркерам stambul-26*: $cnt"
 }
 
 do_secrets() { do_check; wr secret list --name "$NAME" 2>/dev/null || api GET "/accounts/$CLOUDFLARE_ACCOUNT_ID/workers/scripts/$NAME/secrets" | python3 -m json.tool; }
