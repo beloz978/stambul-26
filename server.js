@@ -136,22 +136,54 @@ export default{
     /* ---------- ИИ-гид ---------- */
     if(url.pathname==='/api/ask')return handleAsk(req,env);
 
-    /* ---------- озвучка ---------- */
+    /* ---------- озвучка (AI-voice, опционально и конфигурируемо) ----------
+       Переменные (Settings → Variables, все необязательные):
+         TTS_ENABLED   on|off (дефолт on) — off → 501, фронт покажет «озвучка выключена»
+         TTS_PROVIDER  openai|elevenlabs (дефолт: auto — у кого есть ключ)
+         TTS_MODEL     дефолт-модель (openai: gpt-4o-mini-tts; elevenlabs: eleven_multilingual_v2)
+         TTS_VOICE     дефолт-голос (openai: alloy; elevenlabs: voice-id)
+       Ключи: OPENAI_API_KEY и/или ELEVENLABS_API_KEY.
+       Запрос: POST {text, provider?, model?, voice?} → audio/mpeg
+       GET /api/tts/config → {enabled, providers, default} — для настроек в приложении */
+    if(url.pathname==='/api/tts/config'){
+      const provs=[];
+      if(env.OPENAI_API_KEY)provs.push('openai');
+      if(env.ELEVENLABS_API_KEY)provs.push('elevenlabs');
+      const on=!/^(0|off|false)$/i.test(env.TTS_ENABLED||'')&&provs.length>0;
+      return J({enabled:on,providers:provs,
+        default:{provider:env.TTS_PROVIDER||provs[0]||null,model:env.TTS_MODEL||null,voice:env.TTS_VOICE||null}});
+    }
     if(url.pathname==='/api/tts'){
       if(req.method!=='POST')return J({error:'нужен POST {text}'},405);
-      if(!env.OPENAI_API_KEY)return J({error:'на сервере не задан OPENAI_API_KEY'},500);
+      if(/^(0|off|false)$/i.test(env.TTS_ENABLED||''))return J({error:'озвучка выключена на сервере (TTS_ENABLED=off)'},501);
       let b={};try{b=await req.json();}catch(e){}
       const text=String(b.text||'').slice(0,4000);
       if(!text)return J({error:'пустой текст'},400);
-      const r=await fetch('https://api.openai.com/v1/audio/speech',{
-        method:'POST',
-        headers:{'content-type':'application/json','authorization':'Bearer '+env.OPENAI_API_KEY},
-        body:JSON.stringify({model:b.model||'gpt-4o-mini-tts',voice:b.voice||'alloy',
-          input:text,response_format:'mp3'})
-      });
-      if(!r.ok)return J({error:'OpenAI '+r.status+': '+(await r.text()).slice(0,200)},502);
+      // выбор провайдера: тело → TTS_PROVIDER → у кого есть ключ
+      let prov=b.provider||env.TTS_PROVIDER||(env.OPENAI_API_KEY?'openai':env.ELEVENLABS_API_KEY?'elevenlabs':'');
+      if(prov==='openai'&&!env.OPENAI_API_KEY)prov=env.ELEVENLABS_API_KEY?'elevenlabs':'';
+      if(prov==='elevenlabs'&&!env.ELEVENLABS_API_KEY)prov=env.OPENAI_API_KEY?'openai':'';
+      if(!prov)return J({error:'озвучка не настроена: задайте OPENAI_API_KEY или ELEVENLABS_API_KEY'},501);
+      let r;
+      if(prov==='elevenlabs'){
+        const voice=b.voice||env.TTS_VOICE||'21m00Tcm4TlvDq8ikWAM';
+        r=await fetch('https://api.elevenlabs.io/v1/text-to-speech/'+encodeURIComponent(voice),{
+          method:'POST',
+          headers:{'content-type':'application/json','xi-api-key':env.ELEVENLABS_API_KEY},
+          body:JSON.stringify({text,model_id:b.model||env.TTS_MODEL||'eleven_multilingual_v2'})
+        });
+      }else{
+        r=await fetch('https://api.openai.com/v1/audio/speech',{
+          method:'POST',
+          headers:{'content-type':'application/json','authorization':'Bearer '+env.OPENAI_API_KEY},
+          body:JSON.stringify({model:b.model||env.TTS_MODEL||'gpt-4o-mini-tts',voice:b.voice||env.TTS_VOICE||'alloy',
+            input:text,response_format:'mp3'})
+        });
+      }
+      if(!r.ok)return J({error:prov+' '+r.status+': '+(await r.text()).slice(0,200)},502);
+      console.log(JSON.stringify({ep:'tts',provider:prov,len:text.length}));
       return new Response(r.body,{headers:{'content-type':'audio/mpeg',
-        'cache-control':'public, max-age=86400',...CORS}});
+        'cache-control':'public, max-age=86400','x-tts-provider':prov,...CORS}});
     }
 
     /* ---------- облачный кэш ---------- */
