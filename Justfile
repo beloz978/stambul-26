@@ -56,3 +56,10 @@ deploy-dev:
 
 status-dev:
     CF_ENV=dev bash scripts/prj-tools/cf.sh status
+
+# все app-секреты из config/.env.secrets → секреты воркера (прод / dev)
+secrets-sync:
+    bash scripts/prj-tools/cf.sh secrets-sync
+
+secrets-sync-dev:
+    CF_ENV=dev bash scripts/prj-tools/cf.sh secrets-sync
